@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+dist/
+*.pdb
+*.lib
+*.exe
+*.dll
+.env*
+account.bin
+state.tsv
+scores.json
+maps.json
+installer/payload.zip
