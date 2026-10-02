@@ -41,6 +41,11 @@ static Box rank_row;
 typedef struct { TextRun run; Box row; Player player; } PendingPlayer;
 static PendingPlayer pending_players[50];
 static int pending_player_count;
+typedef struct { Box box; float value; } CardRating;
+static CardRating card_ratings[256];
+static int card_rating_count;
+static TextRun unresolved_title, unresolved_mapper;
+static Box unresolved_card;
 
 static Box screen_box(Box box) {
     Vector a=screen_point((Vector){box.x,box.y}), b=screen_point((Vector){box.x+box.width,box.y+box.height});
@@ -142,7 +147,7 @@ static int reward(const Map *map,int mode) {
         float amount=upper->speed==lower->speed ? 0 : (playback_speed-lower->speed)/(upper->speed-lower->speed);
         value=lower->rewards[mode]+amount*(upper->rewards[mode]-lower->rewards[mode]);
     }
-    return (int)fmaxf(0,roundf(value)-map->best[mode]);
+    return (int)fmaxf(0,roundf(value));
 }
 
 static float difficulty(const Map *map) {
@@ -161,7 +166,7 @@ static float difficulty(const Map *map) {
 }
 
 static void rewards(const Map *map, char *text, size_t capacity) {
-    if (no_fail || start_nonzero || (map && map->ranked>=0)) snprintf(text,capacity,"RPL %d  RPS %d  RPVR %d",reward(map,0),reward(map,1),reward(map,2));
+    if (no_fail || start_nonzero || (map && map->ranked>=0)) snprintf(text,capacity,"MAX  RPL %d  RPS %d  RPVR %d",reward(map,0),reward(map,1),reward(map,2));
     else snprintf(text,capacity,"RPL --  RPS --  RPVR --");
 }
 
@@ -184,6 +189,13 @@ static void play_rewards(Font font,const Map *map,Box box,float size,Tint tint) 
     for(int i=0;i<3;i++) {
         label(font,text[i],x,y+(current_mode==i ? -size*.06f : 0),sizes[i]*scale,current_mode==i ? (Tint){126,201,138,tint.a} : tint);
         x+=(widths[i]+gap)*scale;
+    }
+    if(map && map->ranked>=0 && current_mode>=0 && current_mode<3) {
+        char gain[80];
+        int extra=(int)fmaxf(0,reward(map,current_mode)-map->best[current_mode]);
+        snprintf(gain,sizeof(gain),"Up to +%d new %s",extra,names[current_mode]);
+        float gain_size=size*.92f;
+        label(font,gain,box.x+(box.width-measure_text(font,gain,gain_size,0).x)*.5f,box.y-gain_size*1.7f,gain_size,muted);
     }
 }
 
@@ -344,13 +356,11 @@ static int title_matches(const char *full,const char *text) {
     return !strcmp(full,text);
 }
 
-static int identify_card(const char *text,const char *mapper) {
-    const char *title=text;
-    const char *recent=measured[(measure_cursor-1)&15];
-    if(measure_cursor && title_matches(recent,text)) title=recent;
+static int identify_card(const char *text,const char *mapper,float native_rating) {
     int found=-1;
     for(int i=0;i<map_count;i++) {
-        if(!title_matches(maps[i].title,title) || !title_matches(maps[i].mapper,mapper)) continue;
+        if(!title_matches(maps[i].title,text) || !title_matches(maps[i].mapper,mapper)) continue;
+        if(native_rating>=0 && fabsf(roundf(maps[i].native_rating*100)/100-native_rating)>.011f) continue;
         if(found>=0 && (!maps[i].identity[0] || strcmp(maps[i].identity,maps[found].identity))) return -1;
         found=i;
     }
@@ -405,6 +415,14 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
     }
     if(!accepted) { draw_text(font,text,p,size,spacing,tint); previous_text=run; return; }
     if (!menu) { draw_text(font,text,p,size,spacing,tint); previous_text=run; return; }
+    char *rating_end;
+    float native_value=strtof(text,&rating_end);
+    if(rating_end!=text && !*rating_end && native_value>0 && card_rating_count<256) {
+        for(int i=surface_count-1;i>=0;i--) {
+            Box bounds=surfaces[i].box;
+            if(bounds.width>size*7 && bounds.width<size*25 && bounds.width/bounds.height>.9f && bounds.width/bounds.height<1.1f && contains(bounds,p) && p.x>bounds.x+bounds.width*.5f && p.y<bounds.y+bounds.height*.22f) { card_ratings[card_rating_count++]=(CardRating){bounds,native_value}; break; }
+        }
+    }
     if(!strcmp(text,"Pitch Lock")) speed_popup=1;
     if(!strncmp(text,"Set speed multiplier",20)) custom_popup=1;
     if(custom_popup) {
@@ -423,6 +441,17 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
         }
     }
     EnterCriticalSection(&data_lock);
+    if(unresolved_card.width>0 && rating_end!=text && strstr(rating_end," stars") && contains(unresolved_card,p)) {
+        int resolved=identify_card(unresolved_title.text,unresolved_mapper.text+10,native_value);
+        if(resolved>=0) {
+            card_labels(unresolved_title,&maps[resolved],unresolved_card);
+            float right=visible_right(unresolved_card)-unresolved_card.height*.075f;
+            float x=unresolved_title.position.x+(right-unresolved_title.position.x)*.48f;
+            char value[128]; rewards(&maps[resolved],value,sizeof(value));
+            fitted(unresolved_mapper.font,value,(Vector){x,unresolved_mapper.position.y+unresolved_mapper.size*.3f},unresolved_mapper.size*.5f,0,unresolved_mapper.tint,right-x);
+        }
+        unresolved_card=(Box){0};
+    }
     Box card=container(p,size,1);
     int index=identify(text);
     if (index<0 && !title_exists(text)) card=(Box){0};
@@ -438,7 +467,10 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
             fitted(font,text,p,size,spacing,tint,end-p.x);
         } else draw_text(font,text,p,size,spacing,tint);
     } else if (!strncmp(text,"Mapped by ",10) && pending_card.width>0 && contains(pending_card,p) && fabsf(p.x-pending_title.position.x)<pending_title.size*.25f && p.y>pending_title.position.y && p.y<pending_title.position.y+pending_title.size*1.6f) {
-        int chosen=identify_card(pending_title.text,text+10);
+        float native_rating=-1;
+        for(int i=card_rating_count-1;i>=0;i--) if(contains(card_ratings[i].box,pending_title.position) && fabsf(card_ratings[i].box.width-pending_card.width)<pending_card.width*.06f) { native_rating=card_ratings[i].value; break; }
+        int chosen=identify_card(pending_title.text,text+10,native_rating);
+        if(chosen<0 && pending_card.width>pending_card.height*3) { unresolved_card=pending_card; unresolved_title=pending_title; unresolved_mapper=run; }
         if (chosen>=0) card_labels(pending_title,&maps[chosen],pending_card);
         if (chosen>=0 && pending_card.width>pending_card.height*3) {
             float right=visible_right(pending_card)-pending_card.height*.075f;
@@ -461,7 +493,7 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
         if (size>30 && title_exists(text)) snprintf(selected,sizeof(selected),"%s",text);
         if(selected[0] && !strncmp(text,"Mapped by ",10)) {
             selected_mapper=run;
-            selected_index=identify_card(selected,text+10);
+            selected_index=identify_card(selected,text+10,-1);
             for(int i=0;i<pending_player_count;i++) {
                 PendingPlayer *entry=&pending_players[i];
                 if(selected_index>=0 && !strcmp(entry->player.map,maps[selected_index].identity)) fitted(entry->run.font,entry->player.score,(Vector){entry->run.position.x,entry->row.y+entry->row.height*.73f},fminf(entry->run.size*.56f,entry->row.height*.2f),0,muted,entry->row.x+entry->row.width-entry->run.position.x-entry->run.size*1.8f);

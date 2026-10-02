@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Rhythians;
 
-public record LocalMap(long Id, long OnlineId, string Title, string Mapper, string Hash, string Path, int NoteCount);
+public record LocalMap(long Id, long OnlineId, string Title, string Mapper, string Hash, string Path, int NoteCount, double StarRating = 0);
 public record GameScore(long Id, long MapId, string Hash, string Player, string CreatedAt, double Accuracy, int Misses, double Speed, bool Spin, int StartFrom, bool Passed, string Mods, string Mode);
 
 public sealed class GameDatabase(string path)
@@ -19,10 +19,10 @@ public sealed class GameDatabase(string path)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id,COALESCE(OnlineId,0),Title,MappersJson,COALESCE(MapHash,''),Path,NoteCount FROM Maps";
+        command.CommandText = "SELECT Id,COALESCE(OnlineId,0),Title,MappersJson,COALESCE(MapHash,''),Path,NoteCount,COALESCE(StarRating,0) FROM Maps";
         using var reader = command.ExecuteReader();
         var maps = new List<LocalMap>();
-        while (reader.Read()) maps.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetInt32(6)));
+        while (reader.Read()) maps.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetInt32(6), reader.GetDouble(7)));
         return maps;
     }
 

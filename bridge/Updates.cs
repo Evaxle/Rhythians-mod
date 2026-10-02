@@ -7,7 +7,7 @@ namespace Rhythians;
 
 public sealed class Updates : IDisposable
 {
-    public const string Version = "0.2.0-beta.1";
+    public const string Version = "0.2.0-beta.2";
     private readonly HttpClient client = new(new HttpClientHandler { AllowAutoRedirect = true }) { Timeout = TimeSpan.FromMinutes(5) };
     private JsonNode? asset;
     public string Status { get; private set; } = "idle";

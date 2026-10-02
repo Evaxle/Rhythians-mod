@@ -20,6 +20,7 @@ typedef struct {
     long long id;
     char title[512];
     char mapper[256];
+    float native_rating;
     int ranked;
     float rating, rankability;
     int rewards[3];
@@ -159,7 +160,7 @@ static DWORD WINAPI read_state(void *unused) {
                             for (int i = 0; i < 3; i++) map->rewards[i] = atoi(field[i + 6]);
                         } else if (map_count>0 && count>=3 && maps[map_count-1].id==_strtoi64(field[1],NULL,10)) {
                             Map *map=&maps[map_count-1];
-                            if(!strcmp(field[0],"T") && count==3) snprintf(map->mapper,sizeof(map->mapper),"%s",field[2]);
+                            if(!strcmp(field[0],"T") && count==4) { snprintf(map->mapper,sizeof(map->mapper),"%s",field[2]); map->native_rating=strtof(field[3],NULL); }
                             if (!strcmp(field[0],"B") && count==6) {
                                 map->passed=atoi(field[2]);
                                 for(int i=0;i<3;i++) map->best[i]=atoi(field[i+3]);
@@ -379,6 +380,8 @@ __declspec(dllexport) void EndDrawing(void) {
     selected[0]=0;
     selected_index=-1;
     pending_player_count=0;
+    card_rating_count=0;
+    unresolved_card=(Box){0};
     rank_pending=global_leaderboard=0;
     play_bounds=(Box){0};
     current_card=(Box){0};

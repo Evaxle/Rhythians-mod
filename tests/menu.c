@@ -41,7 +41,7 @@ int main(void) {
     draws=0;
     DrawTextEx(font,"Mapped by Someone",(Vector){400,150},20,0,white);
     assert(draws==1);
-    assert(reward(&maps[0],0)==400);
+    assert(reward(&maps[0],0)==600);
     no_fail=1;
     assert(reward(&maps[0],0)==0);
     no_fail=0; start_nonzero=1;
@@ -55,7 +55,7 @@ int main(void) {
     maps[0].speeds[0]=(SpeedProfile){.speed=1,.rewards={600,300,450}};
     maps[0].speeds[1]=(SpeedProfile){.speed=1.5f,.rewards={1000,500,800}};
     maps[0].speed_count=2; playback_speed=1.25f;
-    assert(reward(&maps[0],0)==600);
+    assert(reward(&maps[0],0)==800);
     for(int mode=0;mode<3;mode++) {
         current_mode=mode; green=0; largest_green=largest_plain=0;
         play_rewards(font,&maps[0],(Box){100,100,250,70},13,white);

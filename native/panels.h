@@ -19,7 +19,9 @@ static void toggle_setting(const char *name) {
 
 static void modal_button(const char *text,Box box,float size,int action) {
     int hover=contains(box,mouse_position());
-    draw_box(box,.14f,5,(Tint){255,255,255,hover ? 40 : 22});
+    int active=panel==3 && action>=10 && action<=13 && profile_tab==action-10;
+    draw_box(box,.14f,5,(Tint){255,255,255,active ? 48 : hover ? 40 : 22});
+    if(active) draw_box((Box){box.x+size*.6f,box.y+box.height-2,box.width-size*1.2f,2},0,1,white);
     float width=measure_text(panel_font,text,size,0).x;
     label(panel_font,text,box.x+(box.width-width)*.5f,box.y+(box.height-size)*.5f,size,white);
     if(hover && mouse_pressed(0)) modal_action=action;
@@ -84,6 +86,7 @@ static void draw_panel(void) {
             for(int i=start;i<count && i<start+8;i++) { fitted(panel_font,profile_rows[profile_tab][i],(Vector){x,y},size*.8f,0,white,w); y+=size*1.55f; }
             if(profile_page>0) modal_button("Previous",(Box){x,box.y+box.height-135*scale,130*scale,34*scale},size*.8f,20);
             if(start+8<count) modal_button("Next",(Box){x+w-130*scale,box.y+box.height-135*scale,130*scale,34*scale},size*.8f,21);
+            if(count) { char pages[32]; snprintf(pages,sizeof(pages),"%d / %d",profile_page+1,(count+7)/8); label(panel_font,pages,x+(w-measure_text(panel_font,pages,size*.8f,0).x)*.5f,box.y+box.height-126*scale,size*.8f,muted); }
         } else {
             modal_button(setting_exists("scores-paused") ? "Score submissions: paused" : "Score submissions: on",(Box){x,y,w,42*scale},size*.9f,30); y+=size*3;
             modal_button("Check for updates",(Box){x,y,w,42*scale},size*.9f,31); y+=size*3;

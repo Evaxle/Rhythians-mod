@@ -19,7 +19,7 @@ Console.WriteLine("Score eligibility and release ordering passed.");
 if (args.Length > 0)
 {
     var database = new GameDatabase(Path.Combine(args[0], "rhythia.db"));
-    var samples = database.Maps().Where(map => map.Title.Contains("Megaflux") || map.OnlineId == 10823 || map.Title.StartsWith("Filthy - Scoop"))
+    var samples = database.Maps().Where(map => map.Title.Contains("Baghdad") || map.Title.Contains("Megaflux") || map.OnlineId == 10823 || map.Title.StartsWith("Filthy - Scoop"))
         .Select(map => new { map.Id, sourceId = map.OnlineId, title = map.Title, noteCount = map.NoteCount, chartHash = ChartIdentity.Read(args[0], map) });
     File.WriteAllText(args[1], JsonSerializer.Serialize(samples));
 }

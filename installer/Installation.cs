@@ -6,7 +6,7 @@ namespace RhythiansInstaller;
 
 public static class Installation
 {
-    public const string Version = "0.2.0-beta.1";
+    public const string Version = "0.2.0-beta.2";
     public const string GameHash = "857C0D71B8CBD0C3F07F9FCD60E007680D5CDE6522C2904FC4DE4D937BEEBD1A";
     public const string LibraryHash = "FBD590391E9BA9CB73C147018AD39CF003132E3C788D1EDAA8E55B946642EC05";
     public static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));

@@ -131,7 +131,7 @@ while (!cancellation.IsCancellationRequested)
                 {
                     if (item is null) continue;
                     var id = item["sourceBeatmapId"]?.GetValue<long>() ?? 0;
-                    foreach (var local in localMaps.Where(m => Normalize(m.OnlineId) == Normalize(id))) fetched.Add(new(local, item.DeepClone()));
+                    foreach (var local in localMaps.Where(m => Normalize(m.OnlineId) == Normalize(id))) if (Matches(local, item)) fetched.Add(new(local, item.DeepClone()));
                 }
             }
             foreach (var batch in resolved.Values.Distinct().Chunk(100))
@@ -141,7 +141,7 @@ while (!cancellation.IsCancellationRequested)
                 {
                     if (item is null) continue;
                     var id = item["id"]!.GetValue<string>();
-                    foreach (var local in localMaps.Where(m => resolved.GetValueOrDefault(m.Hash) == id && fetched.All(found => found.Local.Id != m.Id))) fetched.Add(new(local, item.DeepClone()));
+                    foreach (var local in localMaps.Where(m => resolved.GetValueOrDefault(m.Hash) == id && fetched.All(found => found.Local.Id != m.Id))) if (Matches(local, item)) fetched.Add(new(local, item.DeepClone()));
                 }
             }
             maps = fetched;
@@ -308,6 +308,14 @@ string Chart(LocalMap map)
     return hash;
 }
 
+bool Matches(LocalMap map, JsonNode data)
+{
+    if (data["noteCount"] is JsonValue value && value.TryGetValue<int>(out var count) && count > 0 && count != map.NoteCount) return false;
+    if (data["chartHash"] is not JsonValue identity || !identity.TryGetValue<string>(out var expected)) return true;
+    try { return string.Equals(Chart(map), expected, StringComparison.Ordinal); }
+    catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException) { return false; }
+}
+
 void WriteState()
 {
     var text = new StringBuilder();
@@ -335,7 +343,7 @@ void WriteState()
     {
         byId.TryGetValue(local.Id, out var d);
         text.AppendLine(string.Join('\t', new[] { "M", local.Id.ToString(), Clean(local.Title), d is null ? "-1" : d["status"]?.ToString() == "legacy" ? "2" : d["isRanked"]?.GetValue<bool>() == true ? "1" : "0", d?["rating"]?.ToString() ?? "-1", d?["rankability"]?.ToString() ?? "-1", d?["maxRewards"]?["lock"]?.ToString() ?? "0", d?["maxRewards"]?["spin"]?.ToString() ?? "0", d?["maxRewards"]?["vr"]?.ToString() ?? "0" }));
-        text.AppendLine(string.Join('\t', "T", local.Id, Clean(string.Join(", ", JsonSerializer.Deserialize<string[]>(local.Mapper) ?? []))));
+        text.AppendLine(string.Join('\t', "T", local.Id, Clean(string.Join(", ", JsonSerializer.Deserialize<string[]>(local.Mapper) ?? [])), local.StarRating));
         if (d is null) { text.AppendLine(string.Join('\t', "K", local.Id, Clean(mapChecks.GetValueOrDefault(local.Id, "Check map")))); continue; }
         text.AppendLine(string.Join('\t', "I", local.Id, d["id"]));
         var passed = d["passedModes"]?.AsArray().Select(mode => mode?.ToString()).ToHashSet() ?? [];

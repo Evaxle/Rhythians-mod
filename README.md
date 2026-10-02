@@ -14,7 +14,7 @@ New releases appear in game with **Update and restart** and **Cancel** buttons. 
 
 - Grid, list, and selected-map views show Rhythians difficulty and rankability.
 - Ranked and legacy maps can award points. Unranked maps still show their analysis.
-- The play button shows the additional points available above your current best. Your active mode is green: RPL for Lock, RPS for Spin, RPVR for VR.
+- Map cards and the play button show the full potential score. A separate line shows the extra points available above your current best. Your active mode is green: RPL for Lock, RPS for Spin, RPVR for VR.
 - No Fail and practice starts show zero rewards. Speed changes update the preview.
 - Challenge labels include category, level, and pass status. Eligible full completions at normal speed or faster can record challenge passes, including levels 7–10.
 - Rhythia imports and mod submissions share one best score per map and mode.
