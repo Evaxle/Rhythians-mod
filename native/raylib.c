@@ -33,32 +33,80 @@ typedef struct {
 } Map;
 
 static INIT_ONCE initialized = INIT_ONCE_STATIC_INIT;
-static CRITICAL_SECTION data_lock;
-static Map maps[MAP_LIMIT];
-static int map_count, table[TABLE_SIZE];
-static char folder[MAX_PATH], game[MAX_PATH];
-static char status[160] = "F8 to connect Rhythians", username[128] = "Rhythians";
-static char phase[32]="offline", hint[256]="Log in to see your profile and maps";
-static int online, points[5] = {-1, -1, -1, -1, -1};
-static int current_mode;
-static int panel, profile_tab, profile_page, accepted, signed_in, global_rank, challenge_level;
-static char rhp_rank[48], update_status[32], update_message[256], update_version[64], dismissed_update[64];
-static char profile_rows[3][100][512];
-static int profile_row_count[3];
 typedef struct { char name[128],summary[256],score[256],map[64]; } Player;
-static Player players[50];
-static int player_count;
+typedef struct {
+    Map *s_maps;
+    int s_map_count;
+    int s_table[TABLE_SIZE];
+    char s_status[160];
+    char s_username[128];
+    char s_phase[32];
+    char s_hint[256];
+    int s_online;
+    int s_points[5];
+    int s_current_mode;
+    int s_signed_in;
+    int s_global_rank;
+    int s_challenge_level;
+    char s_rhp_rank[48];
+    char s_update_status[32];
+    char s_update_message[256];
+    char s_update_version[64];
+    char s_profile_rows[3][100][512];
+    int s_profile_row_count[3];
+    Player s_players[50];
+    int s_player_count;
+    char s_avatar_key[65];
+    char s_rank_names[5][8];
+    char s_daily_title[256];
+    char s_daily_status[160];
+    char s_daily_action[40];
+} State;
+static State initial_state={.s_maps=NULL,.s_map_count=0,.s_status="F8 to connect Rhythians",.s_username="Rhythians",.s_phase="offline",.s_hint="Log in to see your profile and maps",.s_online=0,.s_points={-1,-1,-1,-1,-1},.s_current_mode=0,.s_signed_in=0,.s_global_rank=0,.s_challenge_level=0,.s_player_count=0};
+static State *snapshot=&initial_state;
+static void *volatile pending_state, *volatile retired_state;
+static unsigned state_generation;
+static char daily_import[MAX_PATH];
+static volatile LONG daily_import_state;
+#define maps (snapshot->s_maps)
+#define map_count (snapshot->s_map_count)
+#define table (snapshot->s_table)
+#define status (snapshot->s_status)
+#define username (snapshot->s_username)
+#define phase (snapshot->s_phase)
+#define hint (snapshot->s_hint)
+#define online (snapshot->s_online)
+#define points (snapshot->s_points)
+#define current_mode (snapshot->s_current_mode)
+#define signed_in (snapshot->s_signed_in)
+#define global_rank (snapshot->s_global_rank)
+#define challenge_level (snapshot->s_challenge_level)
+#define rhp_rank (snapshot->s_rhp_rank)
+#define update_status (snapshot->s_update_status)
+#define update_message (snapshot->s_update_message)
+#define update_version (snapshot->s_update_version)
+#define profile_rows (snapshot->s_profile_rows)
+#define profile_row_count (snapshot->s_profile_row_count)
+#define players (snapshot->s_players)
+#define player_count (snapshot->s_player_count)
+#define avatar_key (snapshot->s_avatar_key)
+#define rank_names (snapshot->s_rank_names)
+#define daily_title (snapshot->s_daily_title)
+#define daily_status (snapshot->s_daily_status)
+#define daily_action (snapshot->s_daily_action)
+static char folder[MAX_PATH],game[MAX_PATH],dismissed_update[64];
+static int panel,profile_tab,profile_page,accepted;
 static Font panel_font;
 static void draw_panel(void);
 static void write_command(const char *name,const char *value);
-static ULONGLONG updated;
+static volatile ULONGLONG updated;
 static int menu, menu_seen;
 static char selected[512], measured[16][512];
 static int selected_index=-1;
 static int measure_cursor;
 static Texture logo;
 static Texture avatar,rank_icons[5];
-static char avatar_key[65],rank_names[5][8];
+
 static void (*unload_texture)(Texture);
 static void (*draw_text)(Font, const char *, Vector, float, float, Tint);
 static Vector (*measure_text)(Font, const char *, float, float);
@@ -88,8 +136,8 @@ static int lookup(const char *title) {
     return -1;
 }
 
-static void index_maps(void) {
-    memset(table, 0, sizeof(table));
+static void index_maps(State *snapshot) {
+    memset(table, 0, sizeof(snapshot->s_table));
     for (int i = 0; i < map_count; i++) {
         unsigned slot = hash(maps[i].title) & (TABLE_SIZE - 1);
         while (table[slot] && strcmp(maps[abs(table[slot]) - 1].title, maps[i].title)) slot = (slot + 1) & (TABLE_SIZE - 1);
@@ -98,20 +146,18 @@ static void index_maps(void) {
     }
 }
 
-static DWORD WINAPI read_state(void *unused) {
-    char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s\\state.tsv", folder);
-    for (;;) {
-        HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
-        if (file != INVALID_HANDLE_VALUE) {
-            DWORD size = GetFileSize(file, NULL), read = 0;
-            FILETIME written;
-            GetFileTime(file, NULL, NULL, &written);
-            if (size > 0 && size < 16 * 1024 * 1024) {
-                char *data = malloc((size_t)size + 1);
-                if (data && ReadFile(file, data, size, &read, NULL) && read == size) {
-                    data[size] = 0;
-                    EnterCriticalSection(&data_lock);
+static void release_state(State *value) {
+    if(value && value!=&initial_state) { free(value->s_maps); free(value); }
+}
+
+static State *parse_state(char *data) {
+    int capacity=0;
+    for(char *p=data;*p;p++) if((p==data || p[-1]=='\n') && p[0]=='M' && p[1]=='\t') capacity++;
+    if(capacity>MAP_LIMIT) capacity=MAP_LIMIT;
+    State *snapshot=calloc(1,sizeof(State));
+    if(!snapshot) return NULL;
+    maps=calloc(capacity ? capacity : 1,sizeof(Map));
+    if(!maps) { free(snapshot); return NULL; }
                     map_count = 0;
                     player_count=0;
                     memset(profile_row_count,0,sizeof(profile_row_count));
@@ -122,6 +168,7 @@ static DWORD WINAPI read_state(void *unused) {
                         for (char *part = strtok_s(line, "\t", &field_context); part && count < 9; part = strtok_s(NULL, "\t", &field_context)) field[count++] = part;
                         if (count==5 && !strcmp(field[0],"D")) { global_rank=atoi(field[1]); challenge_level=atoi(field[2]); snprintf(rhp_rank,sizeof(rhp_rank),"%s",field[3]); signed_in=atoi(field[4]); }
                         else if (count==4 && !strcmp(field[0],"W")) { snprintf(update_status,32,"%s",field[1]); snprintf(update_message,256,"%s",field[2]); snprintf(update_version,64,"%s",field[3]); }
+                        else if (count==4 && !strcmp(field[0],"Y")) { snprintf(daily_title,256,"%s",field[1]); snprintf(daily_status,160,"%s",field[2]); snprintf(daily_action,40,"%s",field[3]); }
                         else if (count==3 && !strcmp(field[0],"Z")) { int tab=atoi(field[1]); if(tab>=0 && tab<3 && profile_row_count[tab]<100) snprintf(profile_rows[tab][profile_row_count[tab]++],512,"%s",field[2]); }
                         else if (count==5 && !strcmp(field[0],"U") && player_count<50) { Player *p=&players[player_count++]; snprintf(p->name,128,"%s",field[1]); snprintf(p->summary,256,"%s",field[2]); snprintf(p->score,256,"%s",field[3]); snprintf(p->map,64,"%s",field[4]); }
                         else if (count == 3 && !strcmp(field[0], "A")) {
@@ -134,7 +181,7 @@ static DWORD WINAPI read_state(void *unused) {
                                 if(name) name=strtok_s(NULL,",",&context);
                             }
                         } else if (count == 3 && !strcmp(field[0], "G")) {
-                            current_mode=GetModuleHandleA("openxr_loader.dll") && strstr(GetCommandLineA(),"--vr") ? 2 : atoi(field[1]);
+                            current_mode=atoi(field[1]);
                         } else if (count == 3 && !strcmp(field[0], "S")) {
                             snprintf(phase,sizeof(phase),"%s",field[1]);
                             snprintf(hint,sizeof(hint),"%s",field[2]);
@@ -143,11 +190,6 @@ static DWORD WINAPI read_state(void *unused) {
                             snprintf(status, sizeof(status), "%s", field[2]);
                             snprintf(username, sizeof(username), "%s", field[3]);
                             for (int i = 0; i < 5; i++) points[i] = atoi(field[i + 4]);
-                            FILETIME now;
-                            GetSystemTimeAsFileTime(&now);
-                            ULARGE_INTEGER a = {.LowPart = now.dwLowDateTime, .HighPart = now.dwHighDateTime};
-                            ULARGE_INTEGER b = {.LowPart = written.dwLowDateTime, .HighPart = written.dwHighDateTime};
-                            if (a.QuadPart >= b.QuadPart && a.QuadPart - b.QuadPart < 150000000) updated = GetTickCount64();
                         } else if (count == 9 && !strcmp(field[0], "M") && map_count < MAP_LIMIT) {
                             Map *map = &maps[map_count++];
                             memset(map,0,sizeof(*map));
@@ -177,20 +219,62 @@ static DWORD WINAPI read_state(void *unused) {
                         }
                         line = strtok_s(NULL, "\r\n", &line_context);
                     }
-                    index_maps();
-                    LeaveCriticalSection(&data_lock);
+                    index_maps(snapshot);
+
+    return snapshot;
+}
+
+static DWORD WINAPI read_state(void *unused) {
+    char path[MAX_PATH];
+    snprintf(path,sizeof(path),"%s\\state.tsv",folder);
+    FILETIME last={0};
+    unsigned last_hash=0;
+    for(;;) {
+        release_state(InterlockedExchangePointer(&retired_state,NULL));
+        char import_path[MAX_PATH]; snprintf(import_path,sizeof(import_path),"%s\\daily-import.txt",folder);
+        if(daily_import_state==2) { DeleteFileA(import_path); InterlockedExchange(&daily_import_state,0); }
+        if(!daily_import_state) {
+            FILE *request=fopen(import_path,"r");
+            if(request) {
+                char name[80]={0}; fgets(name,sizeof(name),request); fclose(request);
+                if(strlen(name)==43 && !strncmp(name,"daily-",6) && strspn(name+6,"0123456789abcdef")==32 && !strcmp(name+38,".sspm")) {
+                    snprintf(daily_import,sizeof(daily_import),"%s\\%s",folder,name);
+                    if(GetFileAttributesA(daily_import)!=INVALID_FILE_ATTRIBUTES) InterlockedExchange(&daily_import_state,1);
                 }
-                free(data);
+            }
+        }
+        HANDLE file=CreateFileA(path,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,0,NULL);
+        if(file!=INVALID_HANDLE_VALUE) {
+            FILETIME written,now;
+            GetFileTime(file,NULL,NULL,&written);
+            GetSystemTimeAsFileTime(&now);
+            ULARGE_INTEGER a={.LowPart=now.dwLowDateTime,.HighPart=now.dwHighDateTime};
+            ULARGE_INTEGER b={.LowPart=written.dwLowDateTime,.HighPart=written.dwHighDateTime};
+            if(a.QuadPart>=b.QuadPart && a.QuadPart-b.QuadPart<150000000) updated=GetTickCount64();
+            if(CompareFileTime(&last,&written)) {
+                DWORD size=GetFileSize(file,NULL),read=0;
+                if(size>0 && size<16*1024*1024) {
+                    char *data=malloc((size_t)size+1);
+                    if(data && ReadFile(file,data,size,&read,NULL) && read==size) {
+                        data[size]=0;
+                        unsigned content_hash=hash(data);
+                        if(content_hash!=last_hash) {
+                            State *next=parse_state(data);
+                            if(next) { release_state(InterlockedExchangePointer(&pending_state,next)); last_hash=content_hash; }
+                        }
+                        last=written;
+                    }
+                    free(data);
+                }
             }
             CloseHandle(file);
         }
-        Sleep(1000);
+        Sleep(500);
     }
     return 0;
 }
 
 static BOOL CALLBACK setup(PINIT_ONCE once, void *parameter, void **context) {
-    InitializeCriticalSection(&data_lock);
     GetModuleFileNameA(NULL, game, sizeof(game));
     char *slash = strrchr(game, '\\');
     if (!slash) return FALSE;
@@ -263,6 +347,7 @@ static void profile_texture(int slot,float x,float y,float size) {
 
 #include "menu_ui.h"
 #include "panels.h"
+#include "import.h"
 
 #ifdef RHYTHIANS_DIAGNOSTICS
 static char trace[131072];
@@ -307,9 +392,7 @@ __declspec(dllexport) void DrawTexturePro(Texture texture, Box source, Box desti
 #endif
     draw_texture(texture, source, destination, origin, rotation, tint);
     if (menu && profile_pending && destination.x>profile_bounds.x+profile_bounds.width && destination.y>=profile_bounds.y && destination.y+destination.height<=profile_bounds.y+profile_bounds.height) {
-        EnterCriticalSection(&data_lock);
         profile_labels(destination.x);
-        LeaveCriticalSection(&data_lock);
         profile_pending=0;
     }
     if (menu && tint.r==126 && tint.g==201 && tint.b==138 && destination.width==destination.height) {
@@ -323,10 +406,12 @@ __declspec(dllexport) void EndDrawing(void) {
     if (menu_seen && accepted && (key_pressed(297) || (login_visible && mouse_pressed(0) && contains(login_bounds,mouse_position())))) { panel=signed_in && strcmp(phase,"authorizing") ? 3 : 2; profile_page=0; if(signed_in) write_command("command.txt","profile"); }
     for(int i=0;menu_seen && !panel && i<check_count;i++) if(mouse_pressed(0) && contains(check_buttons[i].box,mouse_position())) { if(!signed_in) { panel=2; break; } char value[64]; snprintf(value,sizeof(value),"check %lld",check_buttons[i].id); write_command("command.txt",value); }
     check_count=0;
+    if(menu_seen && !panel && daily_visible && mouse_pressed(0) && contains(daily_bounds,mouse_position())) write_command("command.txt",!strcmp(daily_action,"Download map") ? "daily-download" : "daily-check");
+    daily_visible=0;
     static ULONGLONG sent_players;
-    if(GetTickCount64()-sent_players>1500) { write_command("players.txt",visible_players); write_command("cards.txt",visible_cards); visible_players[0]=visible_cards[0]=0; sent_players=GetTickCount64(); }
+    if(menu_seen && GetTickCount64()-sent_players>3000) { write_command("players.txt",visible_players); write_command("cards.txt",visible_cards); visible_players[0]=visible_cards[0]=0; sent_players=GetTickCount64(); }
     static float sent_speed=-1;
-    if(playback_speed!=sent_speed) { char value[32]; snprintf(value,sizeof(value),"%.6f",playback_speed); write_command("speed.txt",value); sent_speed=playback_speed; }
+    if(menu_seen && playback_speed!=sent_speed) { char value[32]; snprintf(value,sizeof(value),"%.6f",playback_speed); write_command("speed.txt",value); sent_speed=playback_speed; }
     if(menu_seen && mouse_pressed(0)) for(int i=0;i<previous_speed_count;i++) if(contains(previous_speeds[i].bounds,mouse_position())) playback_speed=previous_speeds[i].value;
     if(menu_seen && previous_custom && (key_pressed(257) || (mouse_pressed(0) && contains(previous_confirm,mouse_position()))) && previous_custom_value>=.2f && previous_custom_value<=4) playback_speed=previous_custom_value;
     previous_custom=custom_popup;
@@ -341,9 +426,7 @@ __declspec(dllexport) void EndDrawing(void) {
     speed_popup=0;
     if (menu_seen && selected[0]) {
         static long long last_selected_id;
-        EnterCriticalSection(&data_lock);
         long long selected_id=selected_index>=0 && selected_index<map_count ? maps[selected_index].id : 0;
-        LeaveCriticalSection(&data_lock);
         if(selected_id!=last_selected_id) { char value[32]; snprintf(value,sizeof(value),"%lld",selected_id); write_command("selection-id.txt",value); last_selected_id=selected_id; }
         static char last_selection[512];
         if (strcmp(last_selection,selected)) {
@@ -372,6 +455,8 @@ __declspec(dllexport) void EndDrawing(void) {
     }
     trace_length = 0;
 #endif
+    static int sent_menu=-1;
+    if(sent_menu!=menu_seen) { write_command("menu.txt",menu_seen ? "1" : "0"); sent_menu=menu_seen; }
     menu = menu_seen;
     menu_seen = 0;
     surface_count=0;
@@ -393,5 +478,12 @@ __declspec(dllexport) void EndDrawing(void) {
     no_fail_seen=0;
     if(accepted && menu && !panel && !strcmp(update_status,"available") && strcmp(dismissed_update,update_version)) panel=4;
     draw_panel();
+    State *next=retired_state ? NULL : InterlockedExchangePointer(&pending_state,NULL);
+    if(next) {
+        State *old=snapshot;
+        snapshot=next;
+        state_generation++;
+        InterlockedExchangePointer(&retired_state,old);
+    }
     end_drawing();
 }

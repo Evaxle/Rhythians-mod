@@ -19,13 +19,16 @@ using (var zip = new ZipArchive(payload, ZipArchiveMode.Create, true))
     }
 }
 payload.Position = 0;
+Check(Installation.InstalledVersion(root) is null);
 Installation.Install(root, payload, installer);
+Check(Installation.InstalledVersion(root) == Installation.Version);
 Check(File.Exists(Path.Combine(root, "Rhythians.Uninstall.exe")));
 Check(Installation.Hash(Path.Combine(root, "RhythiansRaylib.dll")) == Installation.LibraryHash);
 payload.Position = 0;
 Installation.Install(root, payload, installer);
 File.WriteAllText(Path.Combine(root, "Rhythians", "keep.txt"), "user file");
 Installation.Uninstall(root);
+Check(Installation.InstalledVersion(root) is null);
 Check(Installation.Hash(Path.Combine(root, "raylib_ogl.dll")) == Installation.LibraryHash);
 Check(!File.Exists(Path.Combine(root, "Rhythians.Uninstall.exe")));
 Check(!File.Exists(Path.Combine(root, "Rhythians", "Rhythians.Bridge.exe")));

@@ -8,6 +8,7 @@ using Rhythians;
 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 using var singleton = new Mutex(true, @"Local\RhythiansModBridge", out var first);
 if (!first) return;
+try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.BelowNormal; } catch (System.ComponentModel.Win32Exception) { }
 var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RhythiansMod");
 Directory.CreateDirectory(folder);
 var gameFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CapoRhythia");
@@ -15,8 +16,16 @@ var database = new GameDatabase(Path.Combine(gameFolder, "rhythia.db"));
 using var api = new Api(folder);
 using var profileImage = new ProfileImage(folder);
 using var updates = new Updates();
+using var daily = new DailyMap();
+Task<JsonNode>? dailyRequest = null;
+Task? dailyDownload = null;
+string? dailyUser = null;
+string dailyError = "";
+DateTime nextDaily = DateTime.MinValue, nextLocalMaps = DateTime.MinValue;
 var nextUpdate = DateTime.MinValue;
 Task? updateCheck = null;
+Task? updateInstall = null;
+CancellationTokenSource? updateCancellation = null;
 using var cancellation = new CancellationTokenSource();
 var state = new BridgeState();
 var cursorPath = Path.Combine(folder, "scores.json");
@@ -24,10 +33,10 @@ var queue = File.Exists(cursorPath) ? JsonSerializer.Deserialize<ScoreQueue>(Fil
 if (queue.Cursor == 0) queue.Cursor = database.LatestScore();
 try { api.Load(); } catch (Exception) { state.Message = "F8 to connect Rhythians"; }
 DateTime nextProfile = DateTime.MinValue, nextMaps = DateTime.MinValue, nextSubmit = DateTime.MinValue;
-var maps = new List<MenuMap>();
 var localMaps = database.Maps();
+var maps = MapCache.Load(folder, api.UserId, localMaps);
 var lastGameSeen = DateTime.UtcNow;
-var mapsReady = false;
+var mapsReady = maps.Count > 0;
 var profileReady = false;
 CancellationTokenSource? signIn = null;
 JsonNode? profileDetails = null;
@@ -44,6 +53,8 @@ var chartHashes = new Dictionary<long, string>();
 var resolved = new Dictionary<string, string>();
 var attempted = new Dictionary<long, DateTime>();
 var identityPath = Path.Combine(folder, "maps.json");
+string lastState = "";
+DateTime lastHeartbeat = DateTime.MinValue;
 try { if (File.Exists(identityPath)) resolved = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(identityPath)) ?? []; } catch (JsonException) { }
 
 while (!cancellation.IsCancellationRequested)
@@ -52,15 +63,25 @@ while (!cancellation.IsCancellationRequested)
     if (DateTime.UtcNow - lastGameSeen > TimeSpan.FromSeconds(30)) break;
     try
     {
+        var menuPath = Path.Combine(folder, "menu.txt");
+        if (File.Exists(menuPath) && File.ReadAllText(menuPath).Trim() == "0") { await Task.Delay(1500, cancellation.Token); continue; }
         if (!File.Exists(Path.Combine(folder, "terms-accepted"))) { state.Phase = "terms"; state.Message = "Welcome to Rhythians"; WriteState(); await Task.Delay(1000); continue; }
         var commandPath = Path.Combine(folder, "command.txt");
         var command = File.Exists(commandPath) ? File.ReadAllText(commandPath).Trim() : "";
         if (command.Length > 0) File.Delete(commandPath);
         if (updateCheck?.IsCompleted == true) { await updateCheck; updateCheck = null; }
-        if ((command == "updates" || DateTime.UtcNow >= nextUpdate) && updateCheck is null) { nextUpdate = DateTime.UtcNow.AddHours(6); updateCheck = updates.Check(cancellation.Token); }
-        if (command == "install-update") await WaitFor(updates.Install(folder, cancellation.Token));
+        if (updateInstall?.IsCompleted == true) { await updateInstall; updateInstall = null; updateCancellation?.Dispose(); updateCancellation = null; }
+        if ((command == "updates" || DateTime.UtcNow >= nextUpdate) && updateCheck is null && updateInstall is null) { nextUpdate = DateTime.UtcNow.AddHours(6); updateCheck = updates.Check(cancellation.Token); }
+        if (command == "install-update" && updateInstall is null && updateCheck is null) { updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token); updateInstall = updates.Install(folder, updateCancellation.Token); }
+        if (command == "cancel-update" && updates.Status == "downloading") updateCancellation?.Cancel();
+        CollectDaily();
+        if (dailyDownload?.IsCompleted == true) { await dailyDownload; dailyDownload = null; nextLocalMaps = DateTime.MinValue; }
+        if (api.UserId is not null && dailyRequest is null && DateTime.UtcNow >= nextDaily) { nextDaily = DateTime.UtcNow.AddMinutes(1); dailyUser = api.UserId; dailyRequest = api.Post("/api/mod/daily", new { }, cancellation.Token); }
+        if (command == "daily-download" && dailyDownload is null && daily.Data?["completed"]?.GetValue<bool>() != true) dailyDownload = daily.Download(folder, cancellation.Token);
+        if (command == "daily-check" && dailyRequest is null && api.UserId is not null) { dailyUser = api.UserId; dailyRequest = api.Post("/api/mod/daily", new { }, cancellation.Token); }
+        if (daily.Data is not null && DateTime.UtcNow >= nextLocalMaps) { nextLocalMaps = DateTime.UtcNow.AddSeconds(15); localMaps = database.Maps(); }
         if (command == "profile") profileDetails = await ReadWhileLoading(api.Get("/api/mod/profile?details=1", cancellation.Token));
-        if (command == "logout") { api.SignOut(); state.Profile = null; profileDetails = null; maps.Clear(); profileReady = mapsReady = false; state.Online = false; state.Phase = "offline"; state.Message = "Rhythians Offline"; await profileImage.Update(null, cancellation.Token); }
+        if (command == "logout") { api.SignOut(); daily.Data = null; state.Profile = null; profileDetails = null; maps.Clear(); profileReady = mapsReady = false; state.Online = false; state.Phase = "offline"; state.Message = "Rhythians Offline"; await profileImage.Update(null, cancellation.Token); }
         if (command.StartsWith("check ") && long.TryParse(command[6..], out var requested) && maps.All(map => map.Local.Id != requested)) { checkMap = requested; attempted.Remove(requested); mapChecks[requested] = "Checking..."; }
         var connect = Path.Combine(folder, "connect");
         if (File.Exists(connect))
@@ -79,6 +100,7 @@ while (!cancellation.IsCancellationRequested)
                 finally { signIn = null; }
             }
             nextProfile = nextMaps = DateTime.MinValue;
+            nextDaily = DateTime.MinValue;
             if (queue.UserId != api.UserId)
             {
                 queue.Pending.Clear();
@@ -145,6 +167,7 @@ while (!cancellation.IsCancellationRequested)
                 }
             }
             maps = fetched;
+            MapCache.Save(folder, api.UserId, maps);
             mapsReady = true;
         }
         if (profileReady && mapsReady)
@@ -167,6 +190,7 @@ while (!cancellation.IsCancellationRequested)
                     if (item is not null)
                     {
                         maps.Add(new(candidate, item.DeepClone()));
+                        MapCache.Save(folder, api.UserId, maps);
                         resolved[candidate.Hash] = item["id"]!.GetValue<string>();
                         File.WriteAllText(identityPath + ".tmp", JsonSerializer.Serialize(resolved));
                         File.Move(identityPath + ".tmp", identityPath, true);
@@ -220,6 +244,7 @@ while (!cancellation.IsCancellationRequested)
         }
         foreach (var storedScore in database.ScoresAfter(queue.Cursor))
         {
+            nextDaily = DateTime.MinValue;
             var modePath = Path.Combine(folder, "mode.txt");
             var vr = File.Exists(modePath) && File.ReadAllText(modePath).Trim() == "2";
             var score = vr ? storedScore with { Mode = "vr" } : storedScore;
@@ -253,6 +278,7 @@ while (!cancellation.IsCancellationRequested)
                 queue.Pending.RemoveAt(0);
                 SaveQueue();
                 nextProfile = nextMaps = DateTime.MinValue;
+                nextDaily = DateTime.MinValue;
             }
             else if (queue.Pending.Count > 1) { queue.Pending.RemoveAt(0); queue.Pending.Add(pending); SaveQueue(); }
         }
@@ -318,8 +344,17 @@ bool Matches(LocalMap map, JsonNode data)
 
 void WriteState()
 {
+    CollectDaily();
     var text = new StringBuilder();
     var p = state.Profile;
+    if (api.UserId is not null && daily.Data is JsonNode day)
+    {
+        var completed = day["completed"]?.GetValue<bool>() == true;
+        var installed = localMaps.Any(map => Normalize(map.OnlineId) == Normalize(day["sourceBeatmapId"]?.GetValue<long>() ?? 0));
+        var note = completed ? "Passed today" : daily.Downloading ? daily.Message : dailyError.Length > 0 ? dailyError : dailyRequest is not null ? "Checking today's pass..." : installed ? "In library · Not passed today" : string.IsNullOrEmpty(daily.Message) ? "Not passed today" : daily.Message;
+        text.AppendLine(string.Join('\t', "Y", Clean(day["title"]?.ToString() ?? "Daily map"), Clean(note), completed ? "Completed" : daily.Downloading ? "Downloading..." : installed ? "Refresh" : "Download map"));
+    }
+    else if (api.UserId is not null) text.AppendLine(string.Join('\t', "Y", "Daily map", dailyError.Length > 0 ? dailyError : "Loading today's map...", dailyError.Length > 0 ? "Retry" : "Loading..."));
     text.AppendLine(string.Join('\t', "W", updates.Status, Clean(updates.Message), Clean(updates.AvailableVersion)));
     text.AppendLine(string.Join('\t', new[] { "P", state.Online ? "1" : "0", Clean(state.Message), Clean(p?["username"]?.ToString() ?? "Rhythians"), p?["rhp"]?.ToString() ?? "-1", p?["rbp"]?.ToString() ?? "-1", p?["rpl"]?.ToString() ?? "-1", p?["rps"]?.ToString() ?? "-1", p?["rpvr"]?.ToString() ?? "-1" }));
     text.AppendLine(string.Join('\t', "S", Clean(state.Phase), Clean(state.Hint)));
@@ -358,11 +393,35 @@ void WriteState()
     var path = Path.Combine(folder, "state.tsv");
     try
     {
-        File.WriteAllText(path + ".tmp", text.ToString(), new UTF8Encoding(false));
+        var value = text.ToString();
+        if (value == lastState && File.Exists(path))
+        {
+            if (DateTime.UtcNow - lastHeartbeat > TimeSpan.FromSeconds(5)) { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); lastHeartbeat = DateTime.UtcNow; }
+            return;
+        }
+        File.WriteAllText(path + ".tmp", value, new UTF8Encoding(false));
         File.Move(path + ".tmp", path, true);
+        lastState = value;
+        lastHeartbeat = DateTime.UtcNow;
     }
     catch (IOException) { }
     catch (UnauthorizedAccessException) { }
+}
+
+void CollectDaily()
+{
+    if (dailyRequest?.IsCompleted != true) return;
+    try
+    {
+        var response = dailyRequest.GetAwaiter().GetResult();
+        if (dailyUser == api.UserId) { daily.Data = response["daily"]?.DeepClone(); dailyError = ""; }
+    }
+    catch (Exception error) when (error is HttpRequestException or InvalidDataException or TaskCanceledException)
+    {
+        dailyError = "Couldn't check · Retry";
+        nextDaily = DateTime.UtcNow.AddSeconds(15);
+    }
+    dailyRequest = null;
 }
 
 static long Normalize(long id) => id > int.MaxValue && id <= uint.MaxValue ? id - 4294967296L : id;

@@ -20,14 +20,14 @@ static Matrix projection(void) { return (Matrix){.m0=2.0f/1920,.m5=-2.0f/1080,.m
 
 int main(void) {
     InitOnceExecuteOnce(&initialized,ready,NULL,NULL);
-    InitializeCriticalSection(&data_lock);
+    maps=calloc(3,sizeof(Map));
     draw_text=text_stub; measure_text=measure_stub; draw_box=box_stub;
     draw_texture=texture_stub; load_texture=load_stub;
     screen_width=width_stub; screen_height=height_stub;
     projection_matrix=projection; modelview_matrix=identity; transform_matrix=identity;
     menu=1; accepted=1; map_count=1;
     maps[0]=(Map){.id=1,.title="Map title",.mapper="Someone",.ranked=1,.rating=6,.rankability=4,.rewards={600,300,450},.best={200,0,100}};
-    index_maps();
+    index_maps(snapshot);
     Font font={0};
     surface((Box){1000,200,900,160},3);
     DrawTextEx(font,"Unrelated button",(Vector){1170,225},48,0,white);
@@ -64,11 +64,24 @@ int main(void) {
     map_count=2;
     strcpy(maps[0].identity,"same-map");
     maps[1]=maps[0]; maps[1].id=2;
-    index_maps();
+    index_maps(snapshot);
     assert(lookup("Map title")>=0);
     strcpy(maps[1].identity,"another-map");
-    index_maps();
+    index_maps(snapshot);
     assert(lookup("Map title")==-1);
+    char state_data[]="P\t1\tOnline\tPlayer\t1\t2\t3\t4\t5\nM\t42\tSnapshot map\t1\t6.5\t4.2\t100\t200\t300\nT\t42\tMapper\t9.2\nY\tDaily title\tNot completed\tDownload map\n";
+    State *parsed=parse_state(state_data);
+    assert(parsed && parsed->s_map_count==1 && parsed->s_maps[0].id==42);
+    assert(!strcmp(parsed->s_daily_title,"Daily title"));
+    assert(!strcmp(maps[0].title,"Map title"));
+    release_state(parsed);
+    menu=0; panel=0;
+    LARGE_INTEGER start,end,frequency;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&start);
+    for(int i=0;i<1000000;i++) DrawTextEx(font,"99.50%",(Vector){20,20},24,0,white);
+    QueryPerformanceCounter(&end);
+    printf("Gameplay text hook: %.3f microseconds per call across 1,000,000 calls.\n",(double)(end.QuadPart-start.QuadPart)/frequency.QuadPart);
     puts("Card boundaries, reward eligibility, speed interpolation, active-mode styling, and duplicate identity passed.");
     return 0;
 }

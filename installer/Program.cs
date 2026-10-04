@@ -57,16 +57,30 @@ internal static class Program
             browse.Click += (_, _) => { using var dialog = new FolderBrowserDialog { SelectedPath = folder.Text }; if (dialog.ShowDialog(this) == DialogResult.OK) folder.Text = dialog.SelectedPath; };
             action = new Button { Text = uninstall ? "Uninstall" : update ? "Update" : "Install", Location = new Point(410, 245), Size = new Size(180, 42), FlatStyle = FlatStyle.Flat };
             action.Click += async (_, _) => await Run();
-            var cancel = new Button { Text = "Close", Location = new Point(28, 245), Size = new Size(120, 42), FlatStyle = FlatStyle.Flat };
+            var cancel = new Button { Text = "Cancel", Location = new Point(28, 245), Size = new Size(120, 42), FlatStyle = FlatStyle.Flat };
             cancel.Click += (_, _) => Close();
             Controls.AddRange([title, message, folder, browse, action, cancel]);
+            folder.TextChanged += (_, _) => DetectInstallation();
+            DetectInstallation();
             FormClosing += (_, args) => { if (working) args.Cancel = true; };
             if (update) Shown += async (_, _) => await Run();
         }
 
+        private void DetectInstallation()
+        {
+            if (working || uninstall) return;
+            try
+            {
+                var previous = Installation.InstalledVersion(folder.Text);
+                action.Text = previous is null ? "Install" : "Replace and update";
+                message.Text = previous is null ? "Your profile, map ratings, and challenge passes inside Rhythia." : $"Rhythians {previous} is already installed. Replace it with {Installation.Version}, or cancel. Your account and game data will be kept.";
+            }
+            catch (Exception error) when (error is IOException or ArgumentException or System.Text.Json.JsonException) { message.Text = "Choose a valid Rhythia folder. Its installation record could not be read."; }
+        }
+
         private async Task Run()
         {
-            action.Enabled = false;
+            foreach (Control control in Controls) if (control is Button or TextBox) control.Enabled = false;
             working = true;
             try
             {
@@ -104,7 +118,7 @@ internal static class Program
                 working = false;
                 if (update) Close();
             }
-            catch (Exception error) { message.Text = error.Message; action.Enabled = true; working = false; }
+            catch (Exception error) { message.Text = error.Message; foreach (Control control in Controls) if (control is Button or TextBox) control.Enabled = true; working = false; }
         }
     }
 }

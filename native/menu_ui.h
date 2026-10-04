@@ -8,6 +8,8 @@ static int surface_count;
 static TextRun previous_text, profile_text;
 static Box profile_bounds, play_bounds, login_bounds;
 static int profile_pending, login_visible, no_fail, no_fail_seen;
+static Box daily_bounds;
+static int daily_visible;
 static int (*screen_width)(void), (*screen_height)(void);
 static _Bool (*mouse_pressed)(int);
 static Vector (*mouse_position)(void);
@@ -41,7 +43,7 @@ static Box rank_row;
 typedef struct { TextRun run; Box row; Player player; } PendingPlayer;
 static PendingPlayer pending_players[50];
 static int pending_player_count;
-typedef struct { Box box; float value; } CardRating;
+typedef struct { Box box; float value,size; } CardRating;
 static CardRating card_ratings[256];
 static int card_rating_count;
 static TextRun unresolved_title, unresolved_mapper;
@@ -239,9 +241,13 @@ static void card_labels(TextRun run, const Map *map, Box card) {
     float rating=difficulty(map);
     if (rating>=0) snprintf(text,sizeof(text),"%.2f",rating);
     else strcpy(text,"--");
-    float rating_size=grid ? size*1.22f : size;
+    float rating_size=grid ? size : run.size*.62f;
+    if(grid) for(int i=0;i<card_rating_count;i++) if(fabsf(card_ratings[i].box.x-card.x)<1 && fabsf(card_ratings[i].box.y-card.y)<1) { rating_size=card_ratings[i].size; break; }
     float rating_x=right-measure_text(run.font,text,rating_size,0).x;
-    if (grid) thumbnail_text(run.font,text,(Vector){rating_x,y},rating_size,run.tint,rating_width*1.22f);
+    float badge_x=rating_x-rating_size*1.1f;
+    if(grid) draw_box((Box){badge_x-rating_size*.25f,y-rating_size*.22f,right-badge_x+rating_size*.5f,rating_size*1.5f},.18f,4,(Tint){0,0,0,145});
+    icon(badge_x,y+rating_size*.05f,rating_size*.85f);
+    if (grid) label(run.font,text,rating_x,y,rating_size,run.tint);
     else label(run.font,text,rating_x,y,rating_size,run.tint);
     rewards(map,text,sizeof(text));
     float reward_size=grid ? size*.875f : size*.75f;
@@ -268,7 +274,7 @@ static int observe_player(TextRun run) {
         rank_pending=0;
         char needle[132]; snprintf(needle,sizeof(needle),"%s\n",run.text);
         if(!strstr(visible_players,needle) && strlen(visible_players)+strlen(needle)<sizeof(visible_players)) strcat(visible_players,needle);
-        EnterCriticalSection(&data_lock);
+
         Player *found=NULL;
         for(int i=0;i<player_count;i++) if(!_stricmp(players[i].name,run.text)) { found=&players[i]; break; }
         if(found) {
@@ -281,10 +287,10 @@ static int observe_player(TextRun run) {
             fitted(run.font,run.text,(Vector){run.position.x,row.y+row.height*.07f},run.size*.87f,run.spacing,run.tint,width);
             fitted(run.font,extra,(Vector){run.position.x,row.y+row.height*.73f},fminf(run.size*.56f,row.height*.2f),0,muted,width);
             player_row=row; player_name=run; player_line=1;
-            LeaveCriticalSection(&data_lock);
+
             return 1;
         }
-        LeaveCriticalSection(&data_lock);
+
     } else if(player_line) {
         player_line=0;
         if(contains(player_row,run.position) && fabsf(run.position.x-player_name.position.x)<run.size && run.position.y>player_name.position.y && (strstr(run.text,"rp") || strstr(run.text," RP") || strstr(run.text,"%"))) {
@@ -310,6 +316,30 @@ static void profile_labels(float right) {
     if (width<r.size*10) return;
     float height=profile_bounds.height;
     float top=profile_bounds.y;
+    if(daily_title[0]) {
+        float unit=r.size, pad=unit*.5f;
+        Box box={profile_bounds.x,top+height+unit*.3f,fminf(right-profile_bounds.x-unit,unit*21),unit*2.85f};
+        int complete=!strcmp(daily_action,"Completed");
+        Tint accent=complete ? (Tint){126,201,138,255} : (Tint){140,177,241,255};
+        draw_box(box,.14f,6,(Tint){12,16,24,232});
+        draw_lines(box,.14f,6,fmaxf(1,unit*.06f),(Tint){accent.r,accent.g,accent.b,115});
+        draw_box((Box){box.x,box.y+pad*.5f,unit*.15f,box.height-pad},.3f,4,accent);
+        float x=box.x+pad,y=box.y+unit*.38f,title_size=unit*.78f;
+        icon(x,y,unit*.8f);
+        label(r.font,"DAILY",x+unit*1.05f,y+unit*.05f,unit*.62f,accent);
+        float title_x=x+unit*3.6f;
+        fitted(r.font,daily_title,(Vector){title_x,y},title_size,0,white,box.x+box.width-pad-title_x);
+        float button_size=unit*.66f;
+        const char *action=complete ? "Completed" : !strcmp(daily_action,"Download map") ? "Download" : daily_action;
+        float button_width=measure_text(r.font,action,button_size,0).x+unit;
+        Box button={box.x+box.width-pad-button_width,box.y+unit*1.53f,button_width,unit};
+        daily_bounds=screen_box(button);
+        daily_visible=!complete && strcmp(daily_action,"Downloading...") && strcmp(daily_action,"Loading...");
+        int hover=daily_visible && contains(daily_bounds,mouse_position());
+        draw_box(button,.2f,5,(Tint){accent.r,accent.g,accent.b,hover ? 65 : 30});
+        label(r.font,action,button.x+unit*.5f,button.y+unit*.15f,button_size,accent);
+        fitted(r.font,daily_status,(Vector){x,button.y+unit*.15f},unit*.66f,0,complete ? accent : muted,button.x-x-pad);
+    }
     float avatar_size=height*.62f;
     profile_texture(-1,left,top+(height-avatar_size)*.5f,avatar_size);
     float x=left+avatar_size+gap;
@@ -356,7 +386,7 @@ static int title_matches(const char *full,const char *text) {
     return !strcmp(full,text);
 }
 
-static int identify_card(const char *text,const char *mapper,float native_rating) {
+static int find_card(const char *text,const char *mapper,float native_rating) {
     int found=-1;
     for(int i=0;i<map_count;i++) {
         if(!title_matches(maps[i].title,text) || !title_matches(maps[i].mapper,mapper)) continue;
@@ -365,6 +395,18 @@ static int identify_card(const char *text,const char *mapper,float native_rating
         found=i;
     }
     return found;
+}
+
+static int identify_card(const char *text,const char *mapper,float native_rating) {
+    typedef struct { unsigned generation; int filled,index; float rating; char title[512],author[256]; } Match;
+    static Match matches[256];
+    Match *cached=&matches[(hash(text)^hash(mapper))&255];
+    if(cached->filled && cached->generation==state_generation && cached->rating==native_rating && !strcmp(cached->title,text) && !strcmp(cached->author,mapper)) return cached->index;
+    cached->index=find_card(text,mapper,native_rating);
+    cached->generation=state_generation; cached->rating=native_rating; cached->filled=1;
+    snprintf(cached->title,sizeof(cached->title),"%s",text);
+    snprintf(cached->author,sizeof(cached->author),"%s",mapper);
+    return cached->index;
 }
 
 static int title_exists(const char *text) {
@@ -393,21 +435,18 @@ static int identify(const char *text) {
 
 __declspec(dllexport) Vector MeasureTextEx(Font font,const char *text,float size,float spacing) {
     InitOnceExecuteOnce(&initialized,setup,NULL,NULL);
-    if (text && strlen(text)<512) {
-        EnterCriticalSection(&data_lock);
-        if (title_exists(text) && !strstr(text,"\xe2\x80\xa6") && !strstr(text,"...")) snprintf(measured[measure_cursor++&15],512,"%s",text);
-        LeaveCriticalSection(&data_lock);
-    }
     return measure_text(font,text,size,spacing);
 }
 
 __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float size,float spacing,Tint tint) {
     InitOnceExecuteOnce(&initialized,setup,NULL,NULL);
     if (!text) return;
+    if(font.texture.id && size>12) panel_font=font;
+    if(!menu && !panel && strcmp(text,"PLAY") && strcmp(text,"PRACTICE") && strcmp(text,"Global player rankings") && !global_leaderboard) { draw_text(font,text,p,size,spacing,tint); return; }
     TextRun run={font,p,size,spacing,tint,{0}};
     snprintf(run.text,sizeof(run.text),"%s",text);
     if(font.texture.id && size>12) panel_font=font;
-    if(accepted && observe_player(run)) { previous_text=run; return; }
+    if(accepted && (menu || global_leaderboard || !strcmp(text,"Global player rankings")) && observe_player(run)) { previous_text=run; return; }
     if (!strcmp(text,"PLAY") || !strcmp(text,"PRACTICE")) {
         menu_seen=1;
         start_nonzero=!strcmp(text,"PRACTICE");
@@ -420,7 +459,7 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
     if(rating_end!=text && !*rating_end && native_value>0 && card_rating_count<256) {
         for(int i=surface_count-1;i>=0;i--) {
             Box bounds=surfaces[i].box;
-            if(bounds.width>size*7 && bounds.width<size*25 && bounds.width/bounds.height>.9f && bounds.width/bounds.height<1.1f && contains(bounds,p) && p.x>bounds.x+bounds.width*.5f && p.y<bounds.y+bounds.height*.22f) { card_ratings[card_rating_count++]=(CardRating){bounds,native_value}; break; }
+            if(bounds.width>size*7 && bounds.width<size*25 && bounds.width/bounds.height>.9f && bounds.width/bounds.height<1.1f && contains(bounds,p) && p.x>bounds.x+bounds.width*.5f && p.y<bounds.y+bounds.height*.22f) { card_ratings[card_rating_count++]=(CardRating){bounds,native_value,size}; break; }
         }
     }
     if(!strcmp(text,"Pitch Lock")) speed_popup=1;
@@ -440,7 +479,7 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
             if(bounds.width>0 && bounds.height<size*3) speed_choices[speed_choice_count++]=(SpeedChoice){screen_box(bounds),fabsf(value-.87f)<.001f ? 1.0f/1.15f : value};
         }
     }
-    EnterCriticalSection(&data_lock);
+
     if(unresolved_card.width>0 && rating_end!=text && strstr(rating_end," stars") && contains(unresolved_card,p)) {
         int resolved=identify_card(unresolved_title.text,unresolved_mapper.text+10,native_value);
         if(resolved>=0) {
@@ -453,8 +492,7 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
         unresolved_card=(Box){0};
     }
     Box card=container(p,size,1);
-    int index=identify(text);
-    if (index<0 && !title_exists(text)) card=(Box){0};
+    if (card.width>0 && !title_exists(text)) card=(Box){0};
     Box pending_card=current_card;
     TextRun pending_title=current_title;
     current_card=(Box){0};
@@ -539,7 +577,7 @@ __declspec(dllexport) void DrawTextEx(Font font,const char *text,Vector p,float 
         }
     }
     previous_text=run;
-    LeaveCriticalSection(&data_lock);
+
 }
 
 __declspec(dllexport) void BeginScissorMode(int x,int y,int width,int height) {

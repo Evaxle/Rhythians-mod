@@ -22,6 +22,8 @@ New releases appear in game with **Update and restart** and **Cancel** buttons. 
 - Linked players show Rhythians rankings on the leaderboard and map rewards on score rows.
 - Your profile menu contains ranks, scores, passes, and submission settings.
 - Login attempts expire after two minutes and offer Retry and Cancel.
+- A compact daily panel checks today's pass, turns green when complete, and downloads missing maps through Rhythia's importer. Daily resets follow the website's UTC day.
+- Map details stay visible from a local cache during refresh. Background map work pauses during gameplay.
 
 Maps without an online ID are matched against the website by chart contents. Ambiguous or missing matches stay unavailable. A different local chart version cannot submit against the website's analyzed version.
 

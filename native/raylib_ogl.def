@@ -495,7 +495,7 @@ IsAudioStreamProcessed=RhythiansRaylib.IsAudioStreamProcessed
 IsAudioStreamValid=RhythiansRaylib.IsAudioStreamValid
 IsCursorHidden=RhythiansRaylib.IsCursorHidden
 IsCursorOnScreen=RhythiansRaylib.IsCursorOnScreen
-IsFileDropped=RhythiansRaylib.IsFileDropped
+IsFileDropped
 IsFileExtension=RhythiansRaylib.IsFileExtension
 IsFileNameValid=RhythiansRaylib.IsFileNameValid
 IsFontValid=RhythiansRaylib.IsFontValid
@@ -541,7 +541,7 @@ LoadAutomationEventList=RhythiansRaylib.LoadAutomationEventList
 LoadCodepoints=RhythiansRaylib.LoadCodepoints
 LoadDirectoryFiles=RhythiansRaylib.LoadDirectoryFiles
 LoadDirectoryFilesEx=RhythiansRaylib.LoadDirectoryFilesEx
-LoadDroppedFiles=RhythiansRaylib.LoadDroppedFiles
+LoadDroppedFiles
 LoadFileData=RhythiansRaylib.LoadFileData
 LoadFileText=RhythiansRaylib.LoadFileText
 LoadFont=RhythiansRaylib.LoadFont
@@ -741,7 +741,7 @@ UnloadAudioStream=RhythiansRaylib.UnloadAudioStream
 UnloadAutomationEventList=RhythiansRaylib.UnloadAutomationEventList
 UnloadCodepoints=RhythiansRaylib.UnloadCodepoints
 UnloadDirectoryFiles=RhythiansRaylib.UnloadDirectoryFiles
-UnloadDroppedFiles=RhythiansRaylib.UnloadDroppedFiles
+UnloadDroppedFiles
 UnloadFileData=RhythiansRaylib.UnloadFileData
 UnloadFileText=RhythiansRaylib.UnloadFileText
 UnloadFont=RhythiansRaylib.UnloadFont

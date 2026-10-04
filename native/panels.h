@@ -40,7 +40,7 @@ static void draw_panel(void) {
     draw_box((Box){0,0,sw,sh},0,1,(Tint){0,0,0,170});
     draw_box(box,.03f,8,(Tint){14,14,17,250});
     modal_action=0;
-    EnterCriticalSection(&data_lock);
+
     if(panel==1) {
         label(panel_font,"Welcome to Rhythians",x,y,size*1.4f,white);
         y+=size*2.4f;
@@ -95,7 +95,7 @@ static void draw_panel(void) {
         modal_button("Refresh",(Box){x,box.y+box.height-70*scale,140*scale,40*scale},size*.85f,22);
         modal_button("Close",(Box){x+w-140*scale,box.y+box.height-70*scale,140*scale,40*scale},size*.85f,3);
     }
-    LeaveCriticalSection(&data_lock);
+
     switch(modal_action) {
         case 1: panel=0; break;
         case 2: write_command("terms-accepted","1"); accepted=1; panel=signed_in ? 0 : 2; break;
@@ -107,7 +107,7 @@ static void draw_panel(void) {
         case 22: write_command("command.txt","profile"); break;
         case 30: toggle_setting("scores-paused"); break;
         case 31: write_command("command.txt","updates"); panel=4; break;
-        case 40: snprintf(dismissed_update,64,"%s",update_version); panel=0; break;
+        case 40: if(!strcmp(update_status,"downloading")) write_command("command.txt","cancel-update"); snprintf(dismissed_update,64,"%s",update_version); panel=0; break;
         case 41: write_command("command.txt","install-update"); snprintf(update_status,32,"downloading"); snprintf(update_message,256,"Preparing the update..."); break;
         case 32: write_command("command.txt","logout"); panel=2; break;
     }
@@ -120,13 +120,13 @@ static void draw_panel(void) {
 }
 
 __declspec(dllexport) _Bool IsMouseButtonPressed(int button) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); return panel ? 0 : mouse_pressed(button); }
-__declspec(dllexport) _Bool IsMouseButtonDown(int button) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); _Bool (*fn)(int)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsMouseButtonDown"); return panel ? 0 : fn(button); }
-__declspec(dllexport) _Bool IsMouseButtonReleased(int button) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); _Bool (*fn)(int)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsMouseButtonReleased"); return panel ? 0 : fn(button); }
+__declspec(dllexport) _Bool IsMouseButtonDown(int button) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static _Bool (*fn)(int); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsMouseButtonDown"); return panel ? 0 : fn(button); }
+__declspec(dllexport) _Bool IsMouseButtonReleased(int button) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static _Bool (*fn)(int); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsMouseButtonReleased"); return panel ? 0 : fn(button); }
 __declspec(dllexport) _Bool IsKeyPressed(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); return panel ? 0 : key_pressed(key); }
-__declspec(dllexport) _Bool IsKeyDown(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); _Bool (*fn)(int)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsKeyDown"); return panel ? 0 : fn(key); }
+__declspec(dllexport) _Bool IsKeyDown(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static _Bool (*fn)(int); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsKeyDown"); return panel ? 0 : fn(key); }
 
-__declspec(dllexport) int GetCharPressed(void) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); int (*fn)(void)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"GetCharPressed"); int value=fn(); return panel ? 0 : value; }
-__declspec(dllexport) float GetMouseWheelMove(void) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); float (*fn)(void)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"GetMouseWheelMove"); return panel ? 0 : fn(); }
-__declspec(dllexport) Vector GetMouseWheelMoveV(void) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); Vector (*fn)(void)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"GetMouseWheelMoveV"); return panel ? (Vector){0} : fn(); }
-__declspec(dllexport) _Bool IsKeyPressedRepeat(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); _Bool (*fn)(int)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsKeyPressedRepeat"); return panel ? 0 : fn(key); }
-__declspec(dllexport) _Bool IsKeyReleased(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); _Bool (*fn)(int)=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsKeyReleased"); return panel ? 0 : fn(key); }
+__declspec(dllexport) int GetCharPressed(void) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static int (*fn)(void); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"GetCharPressed"); int value=fn(); return panel ? 0 : value; }
+__declspec(dllexport) float GetMouseWheelMove(void) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static float (*fn)(void); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"GetMouseWheelMove"); return panel ? 0 : fn(); }
+__declspec(dllexport) Vector GetMouseWheelMoveV(void) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static Vector (*fn)(void); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"GetMouseWheelMoveV"); return panel ? (Vector){0} : fn(); }
+__declspec(dllexport) _Bool IsKeyPressedRepeat(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static _Bool (*fn)(int); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsKeyPressedRepeat"); return panel ? 0 : fn(key); }
+__declspec(dllexport) _Bool IsKeyReleased(int key) { InitOnceExecuteOnce(&initialized,setup,NULL,NULL); static _Bool (*fn)(int); if(!fn) fn=(void *)GetProcAddress(GetModuleHandleA("RhythiansRaylib.dll"),"IsKeyReleased"); return panel ? 0 : fn(key); }
